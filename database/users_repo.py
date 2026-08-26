@@ -1,0 +1,48 @@
+"""database/users_repo.py — пользователи и баланс кредитов доверия."""
+from database.db import get_connection
+
+
+def get_or_create_user(telegram_id: int, username: str | None, full_name: str | None):
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM users WHERE telegram_id = %s", (telegram_id,)
+        ).fetchone()
+        if row:
+            # username/full_name могли измениться с прошлого визита — обновляем
+            # и возвращаем свежую запись.
+            conn.execute(
+                "UPDATE users SET username = %s, full_name = %s WHERE telegram_id = %s",
+                (username, full_name, telegram_id),
+            )
+            return conn.execute(
+                "SELECT * FROM users WHERE telegram_id = %s", (telegram_id,)
+            ).fetchone()
+        conn.execute(
+            "INSERT INTO users (telegram_id, username, full_name) VALUES (%s, %s, %s)",
+            (telegram_id, username, full_name),
+        )
+        return conn.execute(
+            "SELECT * FROM users WHERE telegram_id = %s", (telegram_id,)
+        ).fetchone()
+
+
+def get_user(telegram_id: int):
+    with get_connection() as conn:
+        return conn.execute(
+            "SELECT * FROM users WHERE telegram_id = %s", (telegram_id,)
+        ).fetchone()
+
+
+def get_credits(telegram_id: int) -> int:
+    user = get_user(telegram_id)
+    return user["credits"] if user else 0
+
+
+def add_credits(telegram_id: int, amount: int) -> int:
+    """Прибавляет amount к балансу (может быть 0). Возвращает новый баланс."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            "UPDATE users SET credits = credits + %s WHERE telegram_id = %s RETURNING credits",
+            (amount, telegram_id),
+        )
+        return cur.fetchone()["credits"]

@@ -1,0 +1,40 @@
+"""keyboards/insight_kb.py — клавиатуры для сценария 'Отправить инсайд' и его оценки.
+
+Кнопка "🔙 Назад" (callback_data="nav:menu") прерывает сценарий и
+возвращает в главное меню — обрабатывается в handlers/common.py.
+"""
+from aiogram.types import InlineKeyboardMarkup
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+NAV_MENU_CALLBACK = "nav:menu"
+BACK_BUTTON_TEXT = "🔙 Назад"
+
+
+def insight_start_kb() -> InlineKeyboardMarkup:
+    """Клавиатура под самым первым сообщением сценария отправки инсайда."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text=BACK_BUTTON_TEXT, callback_data=NAV_MENU_CALLBACK)
+    return builder.as_markup()
+
+
+def insight_skip_photo_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="⏭ Пропустить фото", callback_data="insight:skip_photo")
+    builder.button(text=BACK_BUTTON_TEXT, callback_data=NAV_MENU_CALLBACK)
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def insight_confirm_kb() -> InlineKeyboardMarkup:
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Отправить", callback_data="insight:confirm")
+    builder.button(text="❌ Отмена", callback_data="insight:cancel")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
+def rate_insight_kb(insight_id: int) -> InlineKeyboardMarkup:
+    """Кнопка под уведомлением админу — запускает мини-FSM оценки инсайда."""
+    builder = InlineKeyboardBuilder()
+    builder.button(text="✅ Оценить инсайд", callback_data=f"rate:{insight_id}")
+    return builder.as_markup()
