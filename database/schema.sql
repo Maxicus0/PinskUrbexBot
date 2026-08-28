@@ -59,3 +59,10 @@ CREATE TABLE IF NOT EXISTS user_notes (
     text        TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Учёт отправленных праздничных рассылок (см. utils/holidays.py), чтобы не
+-- продублировать поздравление, если бот перезапустится в тот же день.
+CREATE TABLE IF NOT EXISTS holiday_broadcasts (
+    holiday_date  DATE PRIMARY KEY,
+    sent_at       TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);

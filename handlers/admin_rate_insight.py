@@ -9,7 +9,6 @@ handlers/admin_rate_insight.py
 видны только админам, помогают узнавать повторных авторов по user_id.
 """
 from aiogram import Bot, F, Router
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
@@ -18,7 +17,9 @@ from database import insights_repo, notes_repo, users_repo
 from keyboards.main_menu import main_menu_kb
 from states.rating_states import RateInsightForm
 from utils.access_control import is_admin
+from utils.bot_delivery import send_message_to_user
 from utils.formatting import esc, plural_credits
+from utils.holidays import format_bonus_line, get_active_holiday
 from utils.levels import get_level_info
 
 router = Router(name="admin_rate_insight")
@@ -49,7 +50,12 @@ async def start_rating(callback: CallbackQuery, state: FSMContext) -> None:
         await callback.answer("Только для модераторов.", show_alert=True)
         return
 
-    insight_id = int(callback.data.split(":", 1)[1])
+    try:
+        insight_id = int(callback.data.split(":", 1)[1])
+    except ValueError:
+        await callback.answer("Некорректные данные кнопки.", show_alert=True)
+        return
+
     insight = insights_repo.get_insight(insight_id)
     if not insight:
         await callback.answer("Инсайд не найден.", show_alert=True)
@@ -73,7 +79,7 @@ async def start_rating(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.message(RateInsightForm.waiting_rating, F.text)
-async def apply_rating(message: Message, state: FSMContext, bot: Bot) -> None:
+async def apply_rating(message: Message, state: FSMContext, bots: list[Bot]) -> None:
     raw = message.text.strip()
     if not raw.lstrip("-").isdigit():
         await message.answer("Нужно просто число. Попробуйте ещё раз:")
@@ -99,29 +105,41 @@ async def apply_rating(message: Message, state: FSMContext, bot: Bot) -> None:
     insights_repo.set_insight_rated(insight_id, value, message.from_user.id)
 
     if value > 0:
+        # Праздничный бонус (если сегодня праздник, см. utils/holidays.py)
+        # начисляется только на одобренные инсайды — отклонённые (0) его не
+        # получают.
+        holiday = get_active_holiday()
+        bonus = holiday["bonus_credits"] if holiday else 0
+
         old_balance = users_repo.get_credits(insight["user_id"])
         level_before = get_level_info(old_balance)
-        new_balance = users_repo.add_credits(insight["user_id"], value)
+        new_balance = users_repo.add_credits(insight["user_id"], value + bonus)
         level_after = get_level_info(new_balance)
 
         user_text = (
             f"✅ Ваш инсайд #{insight_id} одобрен!\n"
             f"Начислено: {value} {plural_credits(value)} доверия.\n"
-            f"Текущий баланс: {new_balance} {plural_credits(new_balance)}."
         )
+        if bonus:
+            user_text += f"{format_bonus_line(holiday)}\n"
+        user_text += f"Текущий баланс: {new_balance} {plural_credits(new_balance)}."
         if level_after.index > level_before.index:
             user_text += (
                 f"\n\n🎉 Новый уровень: {level_after.color} <b>{level_after.name}</b>!"
             )
     else:
+        bonus = 0
         user_text = f"❌ Ваш инсайд #{insight_id} отклонён модератором."
 
-    try:
-        await bot.send_message(insight["user_id"], user_text)
-    except (TelegramForbiddenError, TelegramBadRequest):
-        pass
+    # Автор мог отправить инсайд через другого бота, чем тот, которым админ
+    # его сейчас оценивает (см. config.BETA_BOT_TOKEN) — пробуем всех ботов,
+    # пока сообщение не дойдёт.
+    await send_message_to_user(bots, insight["user_id"], user_text)
 
-    await message.answer(f"Готово. Инсайду #{insight_id} начислено {value} {plural_credits(value)}.")
+    admin_confirm = f"Готово. Инсайду #{insight_id} начислено {value} {plural_credits(value)}"
+    if bonus:
+        admin_confirm += f" + {bonus} праздничных"
+    await message.answer(admin_confirm + ".")
 
     await state.set_state(RateInsightForm.waiting_note)
     await state.update_data(user_id=insight["user_id"])

@@ -23,6 +23,7 @@ from keyboards.insight_kb import (
 from keyboards.main_menu import BTN_SUBMIT_INSIGHT, main_menu_kb
 from states.insight_states import InsightForm
 from utils.access_control import is_admin
+from utils.bot_delivery import send_message_to_user
 from utils.formatting import CAPTION_LIMIT, esc, format_insight_notification
 
 router = Router(name="insight_submit")
@@ -120,7 +121,7 @@ async def cancel_insight(callback: CallbackQuery, state: FSMContext) -> None:
 
 
 @router.callback_query(InsightForm.confirm, F.data == "insight:confirm")
-async def confirm_insight(callback: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+async def confirm_insight(callback: CallbackQuery, state: FSMContext, bot: Bot, bots: list[Bot]) -> None:
     data = await state.get_data()
     insight_id = insights_repo.create_insight(
         user_id=callback.from_user.id,
@@ -144,24 +145,33 @@ async def confirm_insight(callback: CallbackQuery, state: FSMContext, bot: Bot) 
     # уходят как фото без подписи + отдельное текстовое сообщение.
     caption_fits = photo_file_id and len(notification_text) <= CAPTION_LIMIT
 
+    kb = rate_insight_kb(insight_id)
     for admin_id in config.ADMIN_IDS:
-        try:
-            if photo_file_id and caption_fits:
-                await bot.send_photo(
-                    admin_id,
-                    photo_file_id,
-                    caption=notification_text,
-                    reply_markup=rate_insight_kb(insight_id),
-                )
-            elif photo_file_id:
-                await bot.send_photo(admin_id, photo_file_id)
-                await bot.send_message(
-                    admin_id, notification_text, reply_markup=rate_insight_kb(insight_id)
-                )
-            else:
-                await bot.send_message(
-                    admin_id, notification_text, reply_markup=rate_insight_kb(insight_id)
-                )
-        except (TelegramForbiddenError, TelegramBadRequest):
-            # админ ещё не запускал бота (/start) или заблокировал его — пропускаем
-            continue
+        delivered = False
+        if photo_file_id:
+            # file_id всегда валиден у "bot" — это тот же бот, что и принял
+            # фото от пользователя. Проблема бывает не с файлом, а с самим
+            # админом: он мог ни разу не запускать именно этого бота (см.
+            # config.BETA_BOT_TOKEN) или заблокировать его — тогда падаем
+            # ниже на кросс-бот текстовый фолбэк.
+            try:
+                if caption_fits:
+                    await bot.send_photo(
+                        admin_id, photo_file_id, caption=notification_text, reply_markup=kb
+                    )
+                else:
+                    await bot.send_photo(admin_id, photo_file_id)
+                    await bot.send_message(admin_id, notification_text, reply_markup=kb)
+                delivered = True
+            except (TelegramForbiddenError, TelegramBadRequest):
+                pass
+
+        if not delivered:
+            text = notification_text
+            if photo_file_id:
+                # Фото жёстко привязано к конкретному боту — переслать его
+                # через другого бота нельзя (та же ошибка "Wrong file
+                # identifier", что и в архиве), поэтому админ получает хотя
+                # бы текст с пометкой, где искать фото.
+                text += "\n\n📷 К инсайду приложено фото — доступно через бота, куда его прислали."
+            await send_message_to_user(bots, admin_id, text, reply_markup=kb)

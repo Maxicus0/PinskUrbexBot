@@ -46,3 +46,11 @@ def add_credits(telegram_id: int, amount: int) -> int:
             (amount, telegram_id),
         )
         return cur.fetchone()["credits"]
+
+
+def get_all_telegram_ids() -> list[int]:
+    """Все, у кого есть профиль (хоть раз писали боту) — источник для рассылок,
+    например праздничных поздравлений (см. utils/holidays.py)."""
+    with get_connection() as conn:
+        rows = conn.execute("SELECT telegram_id FROM users").fetchall()
+        return [row["telegram_id"] for row in rows]

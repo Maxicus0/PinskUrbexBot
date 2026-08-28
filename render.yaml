@@ -34,6 +34,11 @@ services:
         value: 3.12.7
       - key: BOT_TOKEN
         sync: false
+      # Токен бета-бота — только для локальных запусков (см. README). На
+      # сервере BOT_TOKEN всегда заполнен, поэтому это поле игнорируется, но
+      # по умолчанию оставляйте его пустым в дашборде Render.
+      - key: BETA_BOT_TOKEN
+        sync: false
       - key: ADMIN_IDS
         sync: false
       - key: DATABASE_URL

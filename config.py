@@ -8,10 +8,27 @@ load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent
 
-BOT_TOKEN: str = os.getenv("BOT_TOKEN", "")
-if not BOT_TOKEN:
+BOT_TOKEN: str = os.getenv("BOT_TOKEN", "").strip()
+
+# BETA_BOT_TOKEN — токен второго бота, только для локальных запусков (например,
+# из PyCharm), никогда не работает параллельно с боевым. Активен всегда ровно
+# один бот: если BOT_TOKEN заполнен — используется он, а BETA_BOT_TOKEN
+# игнорируется (даже если тоже задан — это защищает от случайного запуска двух
+# ботов на сервере); если BOT_TOKEN пуст — используется BETA_BOT_TOKEN. Оба
+# режима работают на одной DATABASE_URL, так что пользователи/кредиты/объекты/
+# инсайды общие. file_id фотографий привязан к принявшему их боту, поэтому
+# объекты с реальными фото добавляйте через боевой бот.
+BETA_BOT_TOKEN: str = os.getenv("BETA_BOT_TOKEN", "").strip()
+
+if BOT_TOKEN:
+    ACTIVE_BOT_TOKEN: str = BOT_TOKEN
+    IS_BETA_MODE: bool = False
+elif BETA_BOT_TOKEN:
+    ACTIVE_BOT_TOKEN = BETA_BOT_TOKEN
+    IS_BETA_MODE = True
+else:
     raise RuntimeError(
-        "BOT_TOKEN не найден. Скопируйте .env.example в .env и укажите токен бота."
+        "Не найден ни BOT_TOKEN, ни BETA_BOT_TOKEN. Укажите хотя бы один в .env."
     )
 
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")

@@ -1,5 +1,8 @@
 """handlers/admin_panel.py — вход в админ-панель и список ожидающих инсайдов."""
+import logging
+
 from aiogram import F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.types import CallbackQuery, Message
 
@@ -8,7 +11,9 @@ from keyboards.admin_menu import admin_menu_kb
 from keyboards.insight_kb import rate_insight_kb
 from keyboards.main_menu import BTN_ADMIN_PANEL
 from utils.access_control import is_admin
-from utils.formatting import format_insight_notification
+from utils.formatting import CAPTION_LIMIT, format_insight_notification
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="admin_panel")
 
@@ -48,4 +53,27 @@ async def list_pending(callback: CallbackQuery) -> None:
     )
     for insight in pending:
         text = format_insight_notification(insight)
-        await callback.message.answer(text, reply_markup=rate_insight_kb(insight["id"]))
+        kb = rate_insight_kb(insight["id"])
+        photo_file_id = insight["photo_file_id"]
+
+        if not photo_file_id:
+            await callback.message.answer(text, reply_markup=kb)
+            continue
+
+        # Фото раньше не показывалось в этом списке вообще — админ не мог
+        # оценить инсайд с фото, не найдя его сначала среди живых уведомлений.
+        # Показываем так же, как при поступлении инсайда (см. insight_submit.py).
+        try:
+            if len(text) <= CAPTION_LIMIT:
+                await callback.message.answer_photo(photo_file_id, caption=text, reply_markup=kb)
+            else:
+                await callback.message.answer_photo(photo_file_id)
+                await callback.message.answer(text, reply_markup=kb)
+        except TelegramBadRequest as e:
+            # file_id мог быть выдан другим ботом на этой же БД (см.
+            # config.BETA_BOT_TOKEN) — не теряем инсайд, показываем текстом.
+            logger.warning("Не удалось показать фото инсайда #%s: %s", insight["id"], e)
+            await callback.message.answer(
+                text + "\n\n📷 Фото приложено, но недоступно через этого бота.",
+                reply_markup=kb,
+            )
