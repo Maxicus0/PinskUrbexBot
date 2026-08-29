@@ -17,9 +17,12 @@ def insight_start_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def insight_skip_photo_kb() -> InlineKeyboardMarkup:
+def insight_media_kb() -> InlineKeyboardMarkup:
+    """Клавиатура на этапе сбора медиа (фото/видео) инсайда: одна кнопка
+    «Готово» работает и как «пропустить» (если медиа ещё нет), и как
+    «закончить прикреплять» (если уже что-то добавлено)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="⏭ Пропустить фото", callback_data="insight:skip_photo")
+    builder.button(text="✅ Готово", callback_data="insight:media_done")
     builder.button(text=BACK_BUTTON_TEXT, callback_data=NAV_MENU_CALLBACK)
     builder.adjust(1)
     return builder.as_markup()

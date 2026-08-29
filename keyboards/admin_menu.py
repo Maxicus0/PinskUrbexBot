@@ -4,15 +4,19 @@
 from aiogram.types import InlineKeyboardMarkup
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
+import config
+
 # Текстовые/числовые поля объекта, доступные для редактирования по одному —
 # (имя колонки в БД, подпись кнопки). Порядок как в форме добавления.
+# danger_level сюда не входит — у него отдельная кнопка и клавиатура из 5
+# вариантов (danger_level_pick_kb), а не свободный текстовый ввод.
 EDITABLE_TEXT_FIELDS: list[tuple[str, str]] = [
     ("title", "📝 Название"),
     ("history", "📜 История"),
     ("current_state", "🏗 Состояние"),
     ("rumors", "👂 Слухи"),
     ("coordinates", "📍 Координаты"),
-    ("min_credits", "🔐 Порог доступа"),
+    ("min_credits", "🔒 Порог доступа"),
 ]
 
 
@@ -21,6 +25,22 @@ def admin_menu_kb() -> InlineKeyboardMarkup:
     builder.button(text="➕ Добавить объект", callback_data="admin:add_object")
     builder.button(text="📂 Объекты архива", callback_data="admin:objects")
     builder.button(text="📋 Ожидающие инсайды", callback_data="admin:pending")
+    builder.button(text="🧪 Изменить свои кредиты", callback_data="admin:set_own_credits")
+    builder.adjust(1)
+    return builder.as_markup()
+
+
+def danger_level_pick_kb(callback_prefix: str) -> InlineKeyboardMarkup:
+    """5 кнопок выбора уровня опасности (config.DANGER_LEVELS). Вызывающий
+    код передаёт свой callback_prefix и сам разбирает код уровня из
+    последнего сегмента callback_data:
+    - при добавлении нового объекта: prefix="adddanger" -> "adddanger:<code>"
+      (объект ещё не создан, id хранится в FSM-состоянии, не нужен в callback_data);
+    - при редактировании существующего: prefix=f"objdanger:{object_id}"
+      -> "objdanger:<id>:<code>"."""
+    builder = InlineKeyboardBuilder()
+    for code, label, emoji in config.DANGER_LEVELS:
+        builder.button(text=f"{emoji} {label}", callback_data=f"{callback_prefix}:{code}")
     builder.adjust(1)
     return builder.as_markup()
 
@@ -70,6 +90,7 @@ def edit_object_fields_kb(object_id: int) -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     for field, label in EDITABLE_TEXT_FIELDS:
         builder.button(text=label, callback_data=f"objedit:{object_id}:{field}")
+    builder.button(text="⚠️ Уровень опасности", callback_data=f"objdanger:{object_id}")
     builder.button(text="📸 Фото объекта", callback_data=f"objedit:{object_id}:object_photos")
     builder.button(text="🚪 Фото залаза", callback_data=f"objedit:{object_id}:entry_photos")
     builder.button(text="🔙 Назад", callback_data=f"adminobj:{object_id}")

@@ -12,6 +12,7 @@ class AddObjectForm(StatesGroup):
     waiting_rumors = State()
     waiting_coordinates = State()     # 3. координаты (сразу после слухов)
     waiting_min_credits = State()
+    waiting_danger_level = State()    # обязательный выбор одной из 5 кнопок — без пропуска
     confirm = State()
 
 

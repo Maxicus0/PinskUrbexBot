@@ -48,6 +48,24 @@ def add_credits(telegram_id: int, amount: int) -> int:
         return cur.fetchone()["credits"]
 
 
+def set_credits(telegram_id: int, value: int) -> int:
+    """Жёстко выставляет баланс кредитов (не прибавляет, а заменяет). Только
+    для служебной функции 'изменить свои кредиты' в админ-панели
+    (handlers/admin_panel.py) — быстрый способ для админа проверить, как
+    выглядят карточка уровня и пороги доступа объектов при разных
+    значениях, без ожидания реальных инсайдов. Upsert на случай, если у
+    админа ещё нет записи в users (не должно случаться на практике — она
+    создаётся при /start, — но так безопаснее)."""
+    with get_connection() as conn:
+        cur = conn.execute(
+            """INSERT INTO users (telegram_id, credits) VALUES (%s, %s)
+               ON CONFLICT (telegram_id) DO UPDATE SET credits = EXCLUDED.credits
+               RETURNING credits""",
+            (telegram_id, value),
+        )
+        return cur.fetchone()["credits"]
+
+
 def get_all_telegram_ids() -> list[int]:
     """Все, у кого есть профиль (хоть раз писали боту) — источник для рассылок,
     например праздничных поздравлений (см. utils/holidays.py)."""

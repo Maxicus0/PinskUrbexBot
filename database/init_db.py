@@ -16,7 +16,10 @@ SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 # Колонки, которые могли отсутствовать в базах, созданных до появления
 # соответствующей фичи. Формат: {таблица: [(колонка, DDL-определение), ...]}
 _REQUIRED_COLUMNS: dict[str, list[tuple[str, str]]] = {
-    "objects": [("coordinates", "TEXT")],
+    "objects": [
+        ("coordinates", "TEXT"),
+        ("danger_level", "TEXT NOT NULL DEFAULT 'black'"),
+    ],
     "object_photos": [("kind", "TEXT NOT NULL DEFAULT 'object'")],
     "insights": [("type", "TEXT NOT NULL DEFAULT 'insight'")],
 }

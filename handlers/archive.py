@@ -31,7 +31,7 @@ async def open_archive(message: Message) -> None:
 
     await message.answer(
         "🗂 <b>Объекты архива</b>\n"
-        "🔐 — объект скрыт, не хватает кредитов доверия (нужное количество — на кнопке), "
+        "🔒 — объект скрыт, не хватает кредитов доверия (нужное количество — на кнопке), "
         "📍 — известны координаты.",
         reply_markup=objects_list_kb(objects, credits),
     )
@@ -59,7 +59,7 @@ async def open_object_card(callback: CallbackQuery) -> None:
     # так что дублируем проверку здесь для консистентности.
     if not has_object_access(credits, obj["min_credits"]):
         await callback.answer(
-            f"🔐 Нужно {obj['min_credits']} {plural_credits(obj['min_credits'])} доверия "
+            f"🔒 Нужно {obj['min_credits']} {plural_credits(obj['min_credits'])} доверия "
             f"(у вас {credits}).",
             show_alert=True,
         )

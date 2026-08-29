@@ -3,7 +3,8 @@ handlers/admin_add_object.py
 --------------------------------
 Сценарий "Добавить объект" (только админы), пошагово:
 название → фото объекта → фото залаза → история → состояние → слухи →
-координаты → порог доступа в кредитах → подтверждение.
+координаты → порог доступа в кредитах → уровень опасности (обязательно,
+одна из 5 кнопок) → подтверждение.
 """
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -11,18 +12,19 @@ from aiogram.types import CallbackQuery, Message
 
 import config
 from database import objects_repo
-from keyboards.admin_menu import add_object_confirm_kb, add_object_photos_done_kb, admin_menu_kb
+from keyboards.admin_menu import (
+    add_object_confirm_kb,
+    add_object_photos_done_kb,
+    admin_menu_kb,
+    danger_level_pick_kb,
+)
 from states.object_states import AddObjectForm
 from utils.access_control import is_admin
-from utils.formatting import esc
+from utils.danger_levels import danger_line
+from utils.formatting import esc, rich_text_or_none
 from utils.validators import is_valid_coordinates, normalize_coordinates
 
 router = Router(name="admin_add_object")
-
-
-def _empty_to_none(text: str) -> str | None:
-    text = text.strip()
-    return None if text == "-" else text
 
 
 @router.callback_query(F.data == "admin:add_object")
@@ -69,6 +71,9 @@ async def object_photos_done(callback: CallbackQuery, state: FSMContext) -> None
     )
 
 
+_RICH_TEXT_HINT = "Поддерживается форматирование Telegram (жирный, курсив, зачёркнутый, код и т.п.)."
+
+
 @router.message(AddObjectForm.waiting_entry_photos, F.photo)
 async def add_entry_photo(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
@@ -82,26 +87,28 @@ async def add_entry_photo(message: Message, state: FSMContext) -> None:
 async def entry_photos_done(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddObjectForm.waiting_history)
     await callback.answer()
-    await callback.message.answer("📜 История объекта (или «-», чтобы пропустить):")
+    await callback.message.answer(
+        f"📜 История объекта. {_RICH_TEXT_HINT} Или «-», чтобы пропустить:"
+    )
 
 
 @router.message(AddObjectForm.waiting_history, F.text)
 async def set_history(message: Message, state: FSMContext) -> None:
-    await state.update_data(history=_empty_to_none(message.text))
+    await state.update_data(history=rich_text_or_none(message))
     await state.set_state(AddObjectForm.waiting_current_state)
-    await message.answer("🏗 Нынешнее состояние объекта:")
+    await message.answer(f"🏗 Нынешнее состояние объекта. {_RICH_TEXT_HINT}")
 
 
 @router.message(AddObjectForm.waiting_current_state, F.text)
 async def set_current_state(message: Message, state: FSMContext) -> None:
-    await state.update_data(current_state=_empty_to_none(message.text))
+    await state.update_data(current_state=rich_text_or_none(message))
     await state.set_state(AddObjectForm.waiting_rumors)
-    await message.answer("👂 Слухи вокруг объекта (или «-», чтобы пропустить):")
+    await message.answer(f"👂 Слухи вокруг объекта. {_RICH_TEXT_HINT} Или «-», чтобы пропустить:")
 
 
 @router.message(AddObjectForm.waiting_rumors, F.text)
 async def set_rumors(message: Message, state: FSMContext) -> None:
-    await state.update_data(rumors=_empty_to_none(message.text))
+    await state.update_data(rumors=rich_text_or_none(message))
     await state.set_state(AddObjectForm.waiting_coordinates)
     await message.answer(
         "📍 <b>Шаг 3/3 — координаты</b>\n"
@@ -129,7 +136,7 @@ async def set_coordinates(message: Message, state: FSMContext) -> None:
     await state.update_data(coordinates=coordinates)
     await state.set_state(AddObjectForm.waiting_min_credits)
     await message.answer(
-        "🔐 Сколько кредитов доверия нужно для доступа к этому объекту?\n"
+        "🔒 Сколько кредитов доверия нужно для доступа к этому объекту?\n"
         f"Обязательное поле — целое число от {config.MIN_OBJECT_CREDITS} "
         f"до {config.MAX_OBJECT_CREDITS}. Пропустить нельзя."
     )
@@ -153,21 +160,35 @@ async def set_min_credits(message: Message, state: FSMContext) -> None:
         return
 
     await state.update_data(min_credits=value)
+    await state.set_state(AddObjectForm.waiting_danger_level)
+    await message.answer(
+        "⚠️ <b>Уровень опасности объекта</b>\n"
+        "Обязательный пункт — выберите один из вариантов кнопкой ниже:",
+        reply_markup=danger_level_pick_kb("adddanger"),
+    )
+
+
+@router.callback_query(AddObjectForm.waiting_danger_level, F.data.regexp(r"^adddanger:(white|green|yellow|red|black)$"))
+async def set_danger_level(callback: CallbackQuery, state: FSMContext) -> None:
+    danger_level = callback.data.split(":")[1]
+    await state.update_data(danger_level=danger_level)
     await state.set_state(AddObjectForm.confirm)
+    await callback.answer()
 
     data = await state.get_data()
     summary = (
         f"<b>{esc(data['title'])}</b>\n\n"
         f"📸 Фото объекта: {len(data.get('object_photos', []))}\n"
         f"🚪 Фото залаза: {len(data.get('entry_photos', []))}\n"
-        f"📜 История: {esc(data.get('history')) or '—'}\n"
-        f"🏗 Состояние: {esc(data.get('current_state')) or '—'}\n"
-        f"👂 Слухи: {esc(data.get('rumors')) or '—'}\n"
+        f"📜 История: {data.get('history') or '—'}\n"
+        f"🏗 Состояние: {data.get('current_state') or '—'}\n"
+        f"👂 Слухи: {data.get('rumors') or '—'}\n"
         f"📍 Координаты: {esc(data.get('coordinates')) or '—'}\n"
-        f"🔐 Порог доступа: {value}\n\n"
+        f"🔒 Порог доступа: {data['min_credits']}\n"
+        f"{danger_line(danger_level)}\n\n"
         "Сохранить объект в архив?"
     )
-    await message.answer(summary, reply_markup=add_object_confirm_kb())
+    await callback.message.answer(summary, reply_markup=add_object_confirm_kb())
 
 
 @router.callback_query(AddObjectForm.confirm, F.data == "objconfirm:cancel")
@@ -187,6 +208,7 @@ async def save_object(callback: CallbackQuery, state: FSMContext) -> None:
         rumors=data.get("rumors"),
         coordinates=data.get("coordinates"),
         min_credits=data["min_credits"],
+        danger_level=data.get("danger_level", config.DEFAULT_DANGER_LEVEL),
         created_by=callback.from_user.id,
     )
     for file_id in data.get("object_photos", []):

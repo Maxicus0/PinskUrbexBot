@@ -3,7 +3,7 @@ from aiogram.fsm.state import State, StatesGroup
 
 
 class InsightForm(StatesGroup):
-    waiting_content = State()          # первое сообщение: текст ИЛИ фото с подписью
-    waiting_text_after_photo = State() # фото пришло без подписи — дозапрашиваем текст
-    waiting_photo_optional = State()   # текст уже есть — предлагаем опционально приложить фото
+    waiting_content = State()          # первое сообщение: текст ИЛИ фото/видео (с подписью или без)
+    waiting_text_after_media = State() # медиа пришло без подписи — дозапрашиваем текст
+    waiting_media = State()            # сбор доп. фото/видео (до config.MAX_INSIGHT_MEDIA), затем «Готово»
     confirm = State()

@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS objects (
     rumors         TEXT,
     coordinates    TEXT,                               -- DMS из Google Maps, напр. 52°07'56.1"N 26°01'02.5"E
     min_credits    INTEGER NOT NULL DEFAULT 0,          -- порог доверия для доступа к карточке
+    danger_level   TEXT NOT NULL DEFAULT 'black',       -- white|green|yellow|red|black, см. config.DANGER_LEVELS
     status         TEXT NOT NULL DEFAULT 'published',   -- published | draft
     created_by     BIGINT REFERENCES users(telegram_id),
     created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -35,7 +36,7 @@ CREATE TABLE IF NOT EXISTS object_photos (
     added_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Инсайды пользователей (свободный текст + опциональное фото).
+-- Инсайды пользователей (свободный текст + опциональные медиа).
 CREATE TABLE IF NOT EXISTS insights (
     id                  BIGSERIAL PRIMARY KEY,
     user_id             BIGINT NOT NULL REFERENCES users(telegram_id),
@@ -43,12 +44,25 @@ CREATE TABLE IF NOT EXISTS insights (
     related_object_id   BIGINT REFERENCES objects(id),   -- legacy, не используется новыми хендлерами
     related_object_name TEXT,                            -- legacy, не используется новыми хендлерами
     text                TEXT NOT NULL,
-    photo_file_id       TEXT,
+    photo_file_id       TEXT,                             -- legacy (одно фото); см. insight_media ниже
     status              TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
     credits_awarded     INTEGER,
     rated_by            BIGINT,                           -- telegram_id админа, оценившего инсайд
     created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     rated_at            TIMESTAMPTZ
+);
+
+-- Медиафайлы инсайда (фото и/или видео), до config.MAX_INSIGHT_MEDIA штук на
+-- инсайд (проверяется в handlers/insight_submit.py на этапе сбора, до
+-- вставки в БД). Как и object_photos, хранит только telegram file_id — сам
+-- файл целиком остаётся на серверах Telegram, бот его не скачивает и не
+-- переносит к себе (подробнее — README, раздел "Безопасность и анонимность").
+CREATE TABLE IF NOT EXISTS insight_media (
+    id          BIGSERIAL PRIMARY KEY,
+    insight_id  BIGINT NOT NULL REFERENCES insights(id) ON DELETE CASCADE,
+    file_id     TEXT NOT NULL,
+    media_type  TEXT NOT NULL DEFAULT 'photo',   -- photo | video
+    added_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Приватные заметки админов об авторах инсайдов (сам автор их не видит).

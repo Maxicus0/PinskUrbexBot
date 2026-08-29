@@ -14,6 +14,8 @@ handlers/admin_manage_objects.py
   objedit:<id>:<field>                   — начать редактирование текстового поля
   objedit:<id>:object_photos|entry_photos — начать редактирование фото
   objeditphoto:<id>:<kind>:clear|done    — очистить/завершить редактирование фото
+  objdanger:<id>                         — открыть выбор уровня опасности
+  objdanger:<id>:<code>                  — назначить уровень опасности (одна кнопка = сразу применяется)
   objdel:<id>:confirm1                   — второй (финальный) шаг подтверждения
   objdel:<id>:confirm2                   — реальное удаление
 """
@@ -26,6 +28,7 @@ from database import objects_repo
 from keyboards.admin_menu import (
     admin_object_manage_kb,
     admin_objects_list_kb,
+    danger_level_pick_kb,
     delete_object_confirm_kb,
     delete_object_final_confirm_kb,
     edit_object_fields_kb,
@@ -33,7 +36,8 @@ from keyboards.admin_menu import (
 )
 from states.object_states import EditObjectForm
 from utils.access_control import is_admin
-from utils.formatting import esc, format_object_card
+from utils.danger_levels import danger_label, danger_line
+from utils.formatting import esc, format_object_card, rich_text_or_none
 from utils.validators import is_valid_coordinates, normalize_coordinates
 
 router = Router(name="admin_manage_objects")
@@ -46,6 +50,11 @@ _FIELD_LABELS = {
     "coordinates": "Координаты",
     "min_credits": "Порог доступа",
 }
+# История/состояние/слухи хранятся уже готовым HTML (см. rich_text_or_none) —
+# в отличие от остальных полей их нельзя повторно пропускать через esc(),
+# иначе теги форматирования превратятся в текст вместо жирного/курсива.
+_RICH_TEXT_FIELDS = {"history", "current_state", "rumors"}
+_RICH_TEXT_HINT = "Поддерживается форматирование Telegram (жирный, курсив, зачёркнутый, код и т.п.)."
 _PHOTO_KIND_LABELS = {"object": "объекта", "entry": "залаза"}
 _TEXT_FIELDS_PATTERN = r"^objedit:\d+:(title|history|current_state|rumors|coordinates|min_credits)$"
 _PHOTO_FIELDS_PATTERN = r"^objedit:\d+:(object_photos|entry_photos)$"
@@ -56,7 +65,7 @@ _PHOTO_DONE_PATTERN = r"^objeditphoto:\d+:(object|entry):done$"
 def _manage_card_text(obj, photo_counts: dict) -> str:
     return (
         f"{format_object_card(obj)}\n\n"
-        f"🔐 Порог доступа: {obj['min_credits']}\n"
+        f"🔒 Порог доступа: {obj['min_credits']}\n"
         f"📸 Фото объекта: {photo_counts['object']} · 🚪 Фото залаза: {photo_counts['entry']}\n"
         f"🆔 id {obj['id']} · статус {obj['status']}"
     )
@@ -85,6 +94,8 @@ def _field_prompt(field: str) -> str:
             f"Пришлите новый порог доступа — целое число кредитов доверия "
             f"от {config.MIN_OBJECT_CREDITS} до {config.MAX_OBJECT_CREDITS}."
         )
+    if field in _RICH_TEXT_FIELDS:
+        return f"Пришлите новый текст. {_RICH_TEXT_HINT} Отправьте «-», чтобы очистить поле."
     return "Пришлите новый текст. Отправьте «-», чтобы очистить поле."
 
 
@@ -139,6 +150,47 @@ async def open_edit_menu(callback: CallbackQuery, state: FSMContext) -> None:
     )
 
 
+# ---------- редактирование: уровень опасности (нажал кнопку — сразу применилось) ----------
+
+@router.callback_query(F.data.regexp(r"^objdanger:\d+$"))
+async def open_danger_picker(callback: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для модераторов.", show_alert=True)
+        return
+    object_id = int(callback.data.split(":")[1])
+    obj = objects_repo.get_object(object_id)
+    if not obj:
+        await callback.answer("Объект не найден.", show_alert=True)
+        return
+    await state.clear()
+    await callback.answer()
+    await callback.message.answer(
+        f"⚠️ Текущий уровень опасности «{esc(obj['title'])}»: {danger_line(obj['danger_level'])}\n\n"
+        "Выберите новый:",
+        reply_markup=danger_level_pick_kb(f"objdanger:{object_id}"),
+    )
+
+
+@router.callback_query(F.data.regexp(r"^objdanger:\d+:(white|green|yellow|red|black)$"))
+async def set_object_danger(callback: CallbackQuery) -> None:
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для модераторов.", show_alert=True)
+        return
+    _, object_id_raw, danger_level = callback.data.split(":")
+    object_id = int(object_id_raw)
+    obj = objects_repo.get_object(object_id)
+    if not obj:
+        await callback.answer("Объект не найден.", show_alert=True)
+        return
+
+    objects_repo.update_object_field(object_id, "danger_level", danger_level)
+    await callback.answer(f"Установлено: {danger_label(danger_level)}")
+    await callback.message.answer(
+        f"✅ Уровень опасности «{esc(obj['title'])}»: {danger_line(danger_level)}",
+        reply_markup=edit_object_fields_kb(object_id),
+    )
+
+
 @router.callback_query(F.data.regexp(_TEXT_FIELDS_PATTERN))
 async def start_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(callback.from_user.id):
@@ -156,7 +208,13 @@ async def start_edit_field(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
 
     current = obj[field]
-    current_text = esc(current) if current not in (None, "") else "—"
+    if current in (None, ""):
+        current_text = "—"
+    elif field in _RICH_TEXT_FIELDS:
+        # Уже готовый HTML (см. rich_text_or_none) — esc() сломал бы теги.
+        current_text = current
+    else:
+        current_text = esc(current)
     await callback.message.answer(
         f"Текущее значение ({_FIELD_LABELS[field]}): {current_text}\n\n{_field_prompt(field)}"
     )
@@ -200,8 +258,8 @@ async def apply_field_edit(message: Message, state: FSMContext) -> None:
             )
             return
 
-    else:  # history / current_state / rumors — свободный текст, "-" очищает поле
-        value = None if raw == "-" else raw
+    else:  # history / current_state / rumors — свободный текст с форматированием
+        value = rich_text_or_none(message)
 
     objects_repo.update_object_field(object_id, field, value)
     await state.clear()

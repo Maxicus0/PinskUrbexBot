@@ -15,15 +15,16 @@ def create_object(
     rumors,
     coordinates,
     min_credits,
+    danger_level,
     created_by,
 ) -> int:
     with get_connection() as conn:
         cur = conn.execute(
             """INSERT INTO objects
-               (title, history, current_state, rumors, coordinates, min_credits, created_by)
-               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               (title, history, current_state, rumors, coordinates, min_credits, danger_level, created_by)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
-            (title, history, current_state, rumors, coordinates, min_credits, created_by),
+            (title, history, current_state, rumors, coordinates, min_credits, danger_level, created_by),
         )
         return cur.fetchone()["id"]
 
@@ -78,7 +79,15 @@ def list_objects_all():
         ).fetchall()
 
 
-_EDITABLE_FIELDS = {"title", "history", "current_state", "rumors", "coordinates", "min_credits"}
+_EDITABLE_FIELDS = {
+    "title",
+    "history",
+    "current_state",
+    "rumors",
+    "coordinates",
+    "min_credits",
+    "danger_level",
+}
 
 
 def update_object_field(object_id: int, field: str, value) -> None:
