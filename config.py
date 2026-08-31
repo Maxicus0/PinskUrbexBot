@@ -10,14 +10,13 @@ BASE_DIR = Path(__file__).resolve().parent
 
 BOT_TOKEN: str = os.getenv("BOT_TOKEN", "").strip()
 
-# BETA_BOT_TOKEN — токен второго бота, только для локальных запусков (например,
-# из PyCharm), никогда не работает параллельно с боевым. Активен всегда ровно
-# один бот: если BOT_TOKEN заполнен — используется он, а BETA_BOT_TOKEN
-# игнорируется (даже если тоже задан — это защищает от случайного запуска двух
-# ботов на сервере); если BOT_TOKEN пуст — используется BETA_BOT_TOKEN. Оба
-# режима работают на одной DATABASE_URL, так что пользователи/кредиты/объекты/
-# инсайды общие. file_id фотографий привязан к принявшему их боту, поэтому
-# объекты с реальными фото добавляйте через боевой бот.
+# BETA_BOT_TOKEN — токен второго бота, только для локальных запусков.
+# Активен всегда ровно один бот: BOT_TOKEN заполнен → боевой режим,
+# бот работает напрямую с PostgreSQL (DATABASE_URL). Иначе, если заполнен
+# BETA_BOT_TOKEN → бета-режим: при каждом запуске локальная SQLite
+# (BETA_DB_PATH ниже) стирается и пересоздаётся заново из свежего снимка
+# той же PostgreSQL (см. database/beta_sync.py) — сам бета-бот дальше
+# работает только с этой локальной копией, боевую базу не трогает.
 BETA_BOT_TOKEN: str = os.getenv("BETA_BOT_TOKEN", "").strip()
 
 if BOT_TOKEN:
@@ -31,11 +30,21 @@ else:
         "Не найден ни BOT_TOKEN, ни BETA_BOT_TOKEN. Укажите хотя бы один в .env."
     )
 
+# Нужен в обоих режимах: в боевом — как основная база бота, в бета — как
+# источник, из которого при каждом локальном запуске подтягивается снимок
+# в локальную SQLite (см. BETA_DB_PATH и database/beta_sync.py).
 DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 if not DATABASE_URL:
     raise RuntimeError(
-        "DATABASE_URL не найден. Укажите строку подключения к PostgreSQL в .env."
+        "DATABASE_URL не найден. Укажите строку подключения к PostgreSQL в .env "
+        "— она нужна и боевому боту (как основная база), и бета-боту (как "
+        "источник снимка для локальной SQLite)."
     )
+
+if IS_BETA_MODE:
+    # Пересоздаётся заново при каждом запуске (database/beta_sync.py) — не
+    # надо ни бэкапить, ни переживать за содержимое.
+    BETA_DB_PATH: Path = BASE_DIR / "beta.db"
 
 
 def _parse_admin_ids(raw: str) -> set[int]:
@@ -67,19 +76,30 @@ DANGER_LEVELS: list[tuple[str, str, str]] = [
 ]
 DEFAULT_DANGER_LEVEL = "black"  # дефолт для старых объектов при миграции — честно отражает "не оценивали"
 
+# Режимы отображения объектов в списке "🗂 Архив" (см. /settings,
+# handlers/settings.py, utils.formatting.format_object_teaser) — личная
+# настройка пользователя (users.archive_display_mode), не влияет на других.
+ARCHIVE_DISPLAY_MODES: list[tuple[str, str]] = [
+    ("standard", "🗂 Стандартный (без цвета опасности)"),
+    ("danger_color", "🎨 Цвет опасности вместо иконки"),
+]
+DEFAULT_ARCHIVE_DISPLAY_MODE = "standard"
+
 CITY_NAME: str = os.getenv("CITY_NAME", "N")
 
+# Ссылка на GitHub-репозиторий проекта — используется командой /about.
+# Необязательная: если не заполнена, /about не падает, просто отвечает,
+# что автор, похоже, обнаглел и закрыл исходники (см. handlers/common.py).
+GITHUB_REPO_URL: str = os.getenv("GITHUB_REPO_URL", "").strip()
+
 # Порт для HTTP-заглушки (нужен только на Render: Web Service обязан
-# слушать порт, иначе деплой считается упавшим). Render сам подставляет
-# PORT через переменную окружения — локально не используется.
+# слушать порт, иначе деплой считается упавшим). Локально не используется.
 PORT: int = int(os.getenv("PORT", "10000"))
 
 MIN_INSIGHT_CREDITS = 0
 MAX_INSIGHT_CREDITS = 10
 
-# Максимум медиафайлов (фото + видео суммарно) на один инсайд. Лимит не
-# анонсируется в тексте сценария (handlers/insight_submit.py) — пользователь
-# просто узнаёт о нём, если попробует прикрепить больше.
+# Максимум медиафайлов (фото + видео суммарно) на один инсайд.
 MAX_INSIGHT_MEDIA = 5
 
 # Уровни доверия — косметическая надстройка над credits (см. utils/levels.py).

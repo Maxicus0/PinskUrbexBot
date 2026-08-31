@@ -11,6 +11,7 @@ from html import escape
 
 from aiogram.types import Message
 
+import config
 from utils.danger_levels import danger_emoji, danger_line
 from utils.levels import get_level_info, progress_bar
 from utils.validators import coordinates_to_maps_url
@@ -66,22 +67,35 @@ def plural_credits(n: int) -> str:
     return "кредитов"
 
 
-def format_object_teaser(obj_row, user_credits: int) -> str:
+def format_object_teaser(
+    obj_row, user_credits: int, display_mode: str = config.DEFAULT_ARCHIVE_DISPLAY_MODE
+) -> str:
     """Короткая подпись объекта для кнопки в списке архива.
 
     Если кредитов не хватает — название объекта НЕ показывается вообще
     (чтобы не палить, что за объект скрыт), вместо него — сколько кредитов
     доверия нужно набрать, например «🔒 Порог доступа: 10 кредитов доверия».
-    Открытые объекты показываются с названием под эмодзи уровня опасности
-    (⚪🟢🟡🔴⚫, см. config.DANGER_LEVELS) — так риск виден ещё до открытия
-    карточки. Если у объекта известны координаты — рядом всегда стоит 📍,
-    независимо от того, открыт объект или скрыт замочком."""
+    Это поведение не зависит от display_mode — риск и название закрытого
+    объекта не палятся заранее в любом режиме.
+
+    Открытые объекты показываются как «{icon} Название», где icon зависит
+    от личной настройки пользователя (см. /settings, config.ARCHIVE_DISPLAY_MODES):
+    - "standard" (по умолчанию) — общая иконка архива 🗂, без эмодзи уровня
+      опасности (⚪🟢🟡🔴⚫, см. config.DANGER_LEVELS): риск не палится
+      заранее прямо на кнопке, он виден только внутри самой карточки объекта
+      (см. format_object_card);
+    - "danger_color" — вместо 🗂 подставляется эмодзи фактического уровня
+      опасности объекта (utils.danger_levels.danger_emoji).
+
+    Если у объекта известны координаты — рядом всегда стоит 📍, независимо
+    от того, открыт объект или скрыт замочком, и независимо от display_mode."""
     need = obj_row["min_credits"]
     locked = user_credits < need
     pin = " 📍" if obj_row["coordinates"] else ""
     if locked:
         return f"🔒 Порог доступа: {need} {plural_credits(need)} доверия{pin}"
-    return f"{danger_emoji(obj_row['danger_level'])} {obj_row['title']}{pin}"
+    icon = danger_emoji(obj_row["danger_level"]) if display_mode == "danger_color" else "🗂"
+    return f"{icon} {obj_row['title']}{pin}"
 
 
 def format_object_card(obj_row) -> str:

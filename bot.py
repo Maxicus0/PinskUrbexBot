@@ -25,6 +25,7 @@ from handlers import (
     archive,
     common,
     insight_submit,
+    settings,
 )
 from utils.bot_delivery import send_message_to_user
 from utils.holidays import format_broadcast_text, get_active_holiday
@@ -96,6 +97,8 @@ async def _holiday_scheduler(bots: list[Bot]) -> None:
 
 
 async def main() -> None:
+    if config.IS_BETA_MODE:
+        logger.info("Бета-бот: пересобираю локальную SQLite из снимка прода…")
     ensure_schema()
 
     if not config.ADMIN_IDS:
@@ -105,7 +108,7 @@ async def main() -> None:
         )
 
     # Ровно один активный бот за процесс — см. config.ACTIVE_BOT_TOKEN.
-    mode_label = "БЕТА (локальный запуск)" if config.IS_BETA_MODE else "боевой"
+    mode_label = "БЕТА (локальный запуск, SQLite-снимок прода)" if config.IS_BETA_MODE else "боевой"
     bots = [
         Bot(
             token=config.ACTIVE_BOT_TOKEN,
@@ -116,6 +119,7 @@ async def main() -> None:
     dp = Dispatcher(storage=MemoryStorage())
 
     dp.include_router(common.router)
+    dp.include_router(settings.router)
     dp.include_router(admin_rate_insight.router)
     dp.include_router(admin_add_object.router)
     dp.include_router(admin_manage_objects.router)

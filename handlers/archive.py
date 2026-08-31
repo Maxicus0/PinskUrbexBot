@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 @router.message(F.text == BTN_ARCHIVE, StateFilter(None))
 async def open_archive(message: Message) -> None:
     credits = users_repo.get_credits(message.from_user.id)
+    display_mode = users_repo.get_archive_display_mode(message.from_user.id)
     objects = objects_repo.list_objects()
     if not objects:
         await message.answer("Архив пока пуст — объекты ещё не добавлены.")
@@ -33,7 +34,7 @@ async def open_archive(message: Message) -> None:
         "🗂 <b>Объекты архива</b>\n"
         "🔒 — объект скрыт, не хватает кредитов доверия (нужное количество — на кнопке), "
         "📍 — известны координаты.",
-        reply_markup=objects_list_kb(objects, credits),
+        reply_markup=objects_list_kb(objects, credits, display_mode),
     )
 
 

@@ -36,8 +36,14 @@ def insight_confirm_kb() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def rate_insight_kb(insight_id: int) -> InlineKeyboardMarkup:
-    """Кнопка под уведомлением админу — запускает мини-FSM оценки инсайда."""
+def rating_back_kb() -> InlineKeyboardMarkup:
+    """Кнопка под запросом числа кредитов доверия («Введите число кредитов
+    доверия (0–N) за инсайд #X»). Открытие очереди («📋 Ожидающие инсайды»)
+    сразу ведёт к этому запросу — отдельных кнопок «Оценить инсайд» и
+    «Пропустить без оценки» больше нет (см. handlers/admin_rate_insight.py,
+    present_insight_for_rating). «🔙 Назад в меню» прерывает оценку текущего инсайда
+    без каких-либо изменений — он остаётся pending и просто ждёт своей
+    очереди дальше (см. cancel_rating)."""
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Оценить инсайд", callback_data=f"rate:{insight_id}")
+    builder.button(text="🔙 Назад в меню", callback_data="rate:cancel")
     return builder.as_markup()

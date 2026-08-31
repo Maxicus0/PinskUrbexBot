@@ -18,10 +18,13 @@ handlers/insight_submit.py
 явным сообщением (см. _reject_document) — это защищает анонимность автора
 инсайда.
 """
+import logging
+
 from aiogram import Bot, F, Router
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo, Message
 
 import config
 from database import insights_repo
@@ -30,7 +33,9 @@ from keyboards.main_menu import BTN_SUBMIT_INSIGHT, main_menu_kb
 from states.insight_states import InsightForm
 from utils.access_control import is_admin
 from utils.bot_delivery import send_message_to_user
-from utils.formatting import esc
+from utils.formatting import CAPTION_LIMIT, esc
+
+logger = logging.getLogger(__name__)
 
 router = Router(name="insight_submit")
 
@@ -46,7 +51,8 @@ INSIGHT_PROMPT_TEXT = (
     "Пишите всё, что знаете, в одном сообщении. Очень сильно награждаются инсайды с фото- или видео-пруфами. "
     "Это полностью анонимно, и бот не собирает никакой информации о вас, если вы сами не отправите её.\n\n"
     "Если вы считаете, что инсайд слишком плох или подобное, но он не содержит спама, то не бойтесь: "
-    "бот <b>физически не может отнять токены</b> за плохой отчет. Он либо начислит от 1 до 10, либо отзовет с оценкой 0."
+    "бот <b>физически не может отнять токены</b> за плохой отчет. Он либо начислит от 1 до 10, "
+    "либо отклонит с оценкой 0 — и в этом случае обязательно напишет причину, почему."
 )
 
 _TOO_MANY_MEDIA_TEXT = (
@@ -118,6 +124,18 @@ async def text_after_media(message: Message, state: FSMContext) -> None:
     await _prompt_more_media(message, len(data.get("media", [])))
 
 
+@router.message(InsightForm.waiting_text_after_media)
+async def text_after_media_wrong_type(message: Message) -> None:
+    """Ловит всё, что не текст (например, ещё одно фото вместо описания) —
+    без этого хендлера сообщение молча проваливалось бы, ничего не отвечая
+    пользователю (баг, найденный при отладке к 0.4)."""
+    await message.answer(
+        "Тут ожидается текстовое описание к уже прикреплённому медиа. "
+        "Пришлите его текстом:",
+        reply_markup=insight_start_kb(),
+    )
+
+
 @router.message(InsightForm.waiting_content, F.text)
 async def content_text_only(message: Message, state: FSMContext) -> None:
     text = message.text.strip()
@@ -130,6 +148,16 @@ async def content_text_only(message: Message, state: FSMContext) -> None:
         "Приложите фото или видео (по желанию, можно несколько) или нажмите «Готово», "
         "если медиа не будет.",
         reply_markup=insight_media_kb(),
+    )
+
+
+@router.message(InsightForm.waiting_content)
+async def content_wrong_type(message: Message) -> None:
+    """Ловит всё, что не текст/фото/видео/документ (голосовое, стикер, GIF,
+    геолокация и т.п.) — без этого хендлера бот молчал бы в ответ."""
+    await message.answer(
+        "Пришлите текст (можно с фото или видео) — так начинается инсайд.",
+        reply_markup=insight_start_kb(),
     )
 
 
@@ -148,6 +176,26 @@ async def add_more_media(message: Message, state: FSMContext) -> None:
     await _prompt_more_media(message, len(media))
 
 
+@router.message(InsightForm.waiting_media, F.text)
+async def add_more_media_text_hint(message: Message) -> None:
+    """Админ/пользователь написал текст вместо того, чтобы нажать «Готово»
+    или прислать ещё медиа — раньше это сообщение молча пропадало."""
+    await message.answer(
+        "Текст уже сохранён. Пришлите ещё фото/видео или нажмите «Готово», "
+        "чтобы перейти к проверке перед отправкой.",
+        reply_markup=insight_media_kb(),
+    )
+
+
+@router.message(InsightForm.waiting_media)
+async def add_more_media_wrong_type(message: Message) -> None:
+    await message.answer(
+        "Такой тип вложения не поддерживается — только фото или видео. "
+        "Пришлите фото/видео или нажмите «Готово».",
+        reply_markup=insight_media_kb(),
+    )
+
+
 @router.callback_query(InsightForm.waiting_media, F.data == "insight:media_done")
 async def media_done(callback: CallbackQuery, state: FSMContext) -> None:
     await callback.answer()
@@ -158,26 +206,46 @@ async def _show_confirmation(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
     await state.set_state(InsightForm.confirm)
 
-    media = data.get("media", [])
-    if media:
-        photos = sum(1 for media_type, _ in media if media_type == "photo")
-        videos = sum(1 for media_type, _ in media if media_type == "video")
-        parts = []
-        if photos:
-            parts.append(f"{photos} фото")
-        if videos:
-            parts.append(f"{videos} видео")
-        media_summary = " + ".join(parts)
-    else:
-        media_summary = "нет"
-
+    media: list[tuple[str, str]] = data.get("media", [])
     summary = (
         "👀 <b>Проверьте перед отправкой</b>\n\n"
         f"{esc(data.get('text'))}\n\n"
-        f"Медиа: {media_summary}\n\n"
         "Отправить на проверку модераторам?"
     )
-    await message.answer(summary, reply_markup=insight_confirm_kb())
+    kb = insight_confirm_kb()
+
+    if not media:
+        await message.answer(summary, reply_markup=kb)
+        return
+
+    # Раньше тут просто писалось "Медиа: 2 фото + 1 видео" — пользователь не
+    # мог посмотреть, что именно уходит на модерацию, до самой отправки.
+    # Показываем реально прикреплённые фото/видео тем же способом, каким их
+    # затем увидит админ (см. handlers/admin_rate_insight.py, _send_insight_card).
+    try:
+        if len(media) == 1:
+            media_type, file_id = media[0]
+            send = message.answer_photo if media_type == "photo" else message.answer_video
+            if len(summary) <= CAPTION_LIMIT:
+                await send(file_id, caption=summary, reply_markup=kb)
+            else:
+                await send(file_id)
+                await message.answer(summary, reply_markup=kb)
+        else:
+            items = [
+                InputMediaVideo(media=file_id)
+                if media_type == "video"
+                else InputMediaPhoto(media=file_id)
+                for media_type, file_id in media
+            ]
+            await message.answer_media_group(items)
+            await message.answer(summary, reply_markup=kb)
+    except TelegramBadRequest as e:
+        logger.warning("Не удалось показать превью медиа инсайда: %s", e)
+        await message.answer(
+            summary + "\n\n📷 Медиа приложено, но не удалось показать превью.",
+            reply_markup=kb,
+        )
 
 
 @router.callback_query(InsightForm.confirm, F.data == "insight:cancel")

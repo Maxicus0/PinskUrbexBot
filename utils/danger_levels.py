@@ -13,12 +13,15 @@ _BY_CODE: dict[str, tuple[str, str]] = {
 _FALLBACK = _BY_CODE[config.DEFAULT_DANGER_LEVEL]
 
 
-def danger_emoji(code: str | None) -> str:
-    return _BY_CODE.get(code, _FALLBACK)[0]
-
-
 def danger_label(code: str | None) -> str:
     return _BY_CODE.get(code, _FALLBACK)[1]
+
+
+def danger_emoji(code: str | None) -> str:
+    """Только эмодзи уровня опасности, без подписи — используется как иконка
+    объекта в списке архива, когда включён режим отображения "с цветом
+    опасности" (см. /settings, utils.formatting.format_object_teaser)."""
+    return _BY_CODE.get(code, _FALLBACK)[0]
 
 
 def danger_line(code: str | None) -> str:

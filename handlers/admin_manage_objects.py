@@ -18,6 +18,10 @@ handlers/admin_manage_objects.py
   objdanger:<id>:<code>                  — назначить уровень опасности (одна кнопка = сразу применяется)
   objdel:<id>:confirm1                   — второй (финальный) шаг подтверждения
   objdel:<id>:confirm2                   — реальное удаление
+
+Как и в admin_add_object.py, оба текстовых/фото-шага (waiting_value,
+waiting_photos) ловят и неожиданный тип сообщения — без этого бот молчал бы
+в ответ (найдено при отладке к 0.4, см. CHANGELOG).
 """
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -270,6 +274,14 @@ async def apply_field_edit(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(EditObjectForm.waiting_value)
+async def apply_field_edit_wrong_type(message: Message) -> None:
+    """Найдено при отладке к 0.4 (см. CHANGELOG): без этого хендлера бот
+    молчал в ответ на что угодно, кроме текста, во время редактирования
+    текстового поля объекта."""
+    await message.answer("Ожидается текст. Попробуйте ещё раз (или «-», чтобы очистить поле, если это применимо):")
+
+
 # ---------- редактирование: фото ----------
 
 @router.callback_query(F.data.regexp(_PHOTO_FIELDS_PATTERN))
@@ -307,6 +319,17 @@ async def add_edit_photo(message: Message, state: FSMContext) -> None:
     counts = objects_repo.count_object_photos(object_id)
     await message.answer(
         f"✅ Фото добавлено ({counts[kind]} всего). Ещё, «Очистить старые фото» или «Готово».",
+        reply_markup=edit_photos_kb(object_id, kind),
+    )
+
+
+@router.message(EditObjectForm.waiting_photos)
+async def add_edit_photo_wrong_type(message: Message, state: FSMContext) -> None:
+    data = await state.get_data()
+    object_id = data["object_id"]
+    kind = data["photo_kind"]
+    await message.answer(
+        "Ожидается фото — пришлите его как обычное фото, или воспользуйтесь кнопками ниже.",
         reply_markup=edit_photos_kb(object_id, kind),
     )
 

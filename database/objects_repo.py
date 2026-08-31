@@ -4,8 +4,20 @@ database/objects_repo.py
 CRUD для объектов архива и их фотографий.
 
 object_photos.kind: "object" — фото самого объекта, "entry" — фото залаза.
+
+С 0.4 created_by (telegram_id админа, добавившего объект) хранится
+зашифрованным (см. utils/crypto.py) — шифрование/расшифровка происходит
+только здесь, вызывающий код работает с обычным int/None.
 """
 from database.db import get_connection
+from utils import crypto
+
+
+def _decrypt_object_row(row):
+    if row is None:
+        return None
+    row["created_by"] = crypto.decrypt_id(row["created_by"])
+    return row
 
 
 def create_object(
@@ -24,7 +36,7 @@ def create_object(
                (title, history, current_state, rumors, coordinates, min_credits, danger_level, created_by)
                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                RETURNING id""",
-            (title, history, current_state, rumors, coordinates, min_credits, danger_level, created_by),
+            (title, history, current_state, rumors, coordinates, min_credits, danger_level, crypto.encrypt_id(created_by)),
         )
         return cur.fetchone()["id"]
 
@@ -41,20 +53,22 @@ def add_object_photo(object_id: int, file_id: str, kind: str = "object", caption
 
 def get_object(object_id: int):
     with get_connection() as conn:
-        return conn.execute(
+        row = conn.execute(
             "SELECT * FROM objects WHERE id = %s", (object_id,)
         ).fetchone()
+        return _decrypt_object_row(row)
 
 
 def list_objects(status: str = "published"):
     """Объекты для раздела "Архив", отсортированные по возрастанию цены
     (min_credits), при равной цене — по алфавиту."""
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT * FROM objects WHERE status = %s "
             "ORDER BY min_credits ASC, LOWER(title) ASC",
             (status,),
         ).fetchall()
+        return [_decrypt_object_row(row) for row in rows]
 
 
 def get_object_photos(object_id: int, kind: str | None = None):
@@ -74,9 +88,10 @@ def get_object_photos(object_id: int, kind: str | None = None):
 def list_objects_all():
     """Все объекты (любой status) — для админ-панели управления объектами."""
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT * FROM objects ORDER BY LOWER(title) ASC"
         ).fetchall()
+        return [_decrypt_object_row(row) for row in rows]
 
 
 _EDITABLE_FIELDS = {

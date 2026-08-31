@@ -3,19 +3,48 @@ database/insights_repo.py
 ----------------------------
 CRUD для инсайдов (свободных сообщений пользователей), их медиафайлов и
 модерации.
-Поля type/related_object_* оставлены в схеме ради обратной совместимости
+
+Начиная с релиза 0.4 инсайды в БД — это ТОЛЬКО очередь на модерацию, а не
+постоянный архив. Строка живёт в таблице insights исключительно, пока имеет
+status='pending': как только админ довёл его обработку до конца — оценил
+(и, если нужно, дописал причину отказа и/или заметку об авторе) —
+вызывается delete_insight(), и запись вместе со всеми её медиафайлами
+(insight_media, ON DELETE CASCADE) удаляется из БД навсегда. Это сделано намеренно, чтобы БД не пухла от текстов/медиа
+каждого когда-либо присланного инсайда (у некоторых бесплатных Postgres,
+например на Render, есть жёсткий лимит объёма). Начисленные кредиты доверия
+переживают удаление — они хранятся отдельно, в users.credits. Содержимое
+самого инсайда после обработки остаётся только в переписке админа с ботом в
+Telegram (сообщение, которое бот прислал во время оценки), см. README,
+раздел «Безопасность и анонимность».
+Поэтому колонки status/credits_awarded/rated_by/rated_at по факту больше не
+используются (строка либо 'pending', либо её уже нет) — оставлены в схеме
+только ради обратной совместимости со старыми базами, ничего в них не
+записывается.
+Поля type/related_object_* тоже оставлены в схеме ради обратной совместимости
 и не участвуют в текущей логике. photo_file_id тоже legacy (одно фото) —
 новые инсайды используют insight_media (фото и видео, до
 config.MAX_INSIGHT_MEDIA штук).
+
+С 0.4 user_id хранится зашифрованным (см. utils/crypto.py) — шифрование/
+расшифровка происходит только здесь, вызывающий код (handlers/*) как и
+раньше работает с обычным int telegram_id автора инсайда.
 """
 from database.db import get_connection
+from utils import crypto
+
+
+def _decrypt_insight_row(row):
+    if row is None:
+        return None
+    row["user_id"] = crypto.decrypt_id(row["user_id"])
+    return row
 
 
 def create_insight(user_id: int, text: str) -> int:
     with get_connection() as conn:
         cur = conn.execute(
             "INSERT INTO insights (user_id, text) VALUES (%s, %s) RETURNING id",
-            (user_id, text),
+            (crypto.encrypt_id(user_id), text),
         )
         return cur.fetchone()["id"]
 
@@ -41,9 +70,10 @@ def get_insight_media(insight_id: int):
 
 def get_insight(insight_id: int):
     with get_connection() as conn:
-        return conn.execute(
+        row = conn.execute(
             "SELECT * FROM insights WHERE id = %s", (insight_id,)
         ).fetchone()
+        return _decrypt_insight_row(row)
 
 
 def get_pending_insights():
@@ -51,9 +81,10 @@ def get_pending_insights():
     считает номер очереди — иначе номера в списке ожидающих и в уведомлении/
     оценке (insight_submit.py, admin_rate_insight.py) могут разойтись."""
     with get_connection() as conn:
-        return conn.execute(
+        rows = conn.execute(
             "SELECT * FROM insights WHERE status = 'pending' ORDER BY created_at, id"
         ).fetchall()
+        return [_decrypt_insight_row(row) for row in rows]
 
 
 def count_pending_insights() -> int:
@@ -77,9 +108,10 @@ def get_next_pending_insight():
     _advance_to_next_insight, и handlers/admin_panel.py, list_pending).
     None, если очередь пуста."""
     with get_connection() as conn:
-        return conn.execute(
+        row = conn.execute(
             "SELECT * FROM insights WHERE status = 'pending' ORDER BY created_at, id LIMIT 1"
         ).fetchone()
+        return _decrypt_insight_row(row)
 
 
 def get_queue_position(insight_id: int) -> int:
@@ -106,13 +138,13 @@ def get_queue_position(insight_id: int) -> int:
         return row["n"]
 
 
-def set_insight_rated(insight_id: int, credits_awarded: int, rated_by: int) -> None:
-    """0 кредитов = инсайд отклонён, >0 = одобрен."""
-    status = "approved" if credits_awarded > 0 else "rejected"
+def delete_insight(insight_id: int) -> None:
+    """Удаляет инсайд и все его медиафайлы из БД — вызывается в самом конце
+    обработки (см. module docstring выше): после оценки (и, если нужно,
+    причины отказа/заметки об авторе). insight_media удаляется каскадно
+    (ON DELETE CASCADE в schema.sql), отдельный запрос не нужен. Кредиты
+    доверия нигде в этой таблице не сохраняются — начисление
+    происходит отдельно, через users_repo.add_credits(), до вызова этой
+    функции."""
     with get_connection() as conn:
-        conn.execute(
-            """UPDATE insights
-               SET status = %s, credits_awarded = %s, rated_by = %s, rated_at = NOW()
-               WHERE id = %s""",
-            (status, credits_awarded, rated_by, insight_id),
-        )
+        conn.execute("DELETE FROM insights WHERE id = %s", (insight_id,))

@@ -5,6 +5,10 @@ handlers/admin_add_object.py
 название → фото объекта → фото залаза → история → состояние → слухи →
 координаты → порог доступа в кредитах → уровень опасности (обязательно,
 одна из 5 кнопок) → подтверждение.
+
+Каждый шаг ловит и неожиданный тип сообщения (см. *_wrong_type хендлеры
+ниже) — без них бот молча игнорировал бы, например, фото вместо текста
+истории объекта (найдено при отладке к 0.4, см. CHANGELOG).
 """
 from aiogram import F, Router
 from aiogram.fsm.context import FSMContext
@@ -49,6 +53,14 @@ async def set_title(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(AddObjectForm.waiting_title)
+async def title_wrong_type(message: Message) -> None:
+    """Найдено при отладке к 0.4 (см. CHANGELOG): без этого хендлера
+    непонятная админу тишина в ответ на что угодно, кроме текста (фото,
+    голосовое и т.п.), на самом первом шаге сценария."""
+    await message.answer("Ожидается текст — название объекта. Попробуйте ещё раз:")
+
+
 @router.message(AddObjectForm.waiting_object_photos, F.photo)
 async def add_object_photo(message: Message, state: FSMContext) -> None:
     data = await state.get_data()
@@ -56,6 +68,14 @@ async def add_object_photo(message: Message, state: FSMContext) -> None:
     photos.append(message.photo[-1].file_id)
     await state.update_data(object_photos=photos)
     await message.answer(f"✅ Фото объекта добавлено ({len(photos)}). Ещё, или «Готово».")
+
+
+@router.message(AddObjectForm.waiting_object_photos)
+async def object_photos_wrong_type(message: Message) -> None:
+    await message.answer(
+        "Ожидается фото объекта — пришлите его как обычное фото, или нажмите «Готово».",
+        reply_markup=add_object_photos_done_kb("object"),
+    )
 
 
 @router.callback_query(AddObjectForm.waiting_object_photos, F.data == "objphoto:object:done")
@@ -83,6 +103,14 @@ async def add_entry_photo(message: Message, state: FSMContext) -> None:
     await message.answer(f"✅ Фото залаза добавлено ({len(photos)}). Ещё, или «Готово».")
 
 
+@router.message(AddObjectForm.waiting_entry_photos)
+async def entry_photos_wrong_type(message: Message) -> None:
+    await message.answer(
+        "Ожидается фото залаза — пришлите его как обычное фото, или нажмите «Готово».",
+        reply_markup=add_object_photos_done_kb("entry"),
+    )
+
+
 @router.callback_query(AddObjectForm.waiting_entry_photos, F.data == "objphoto:entry:done")
 async def entry_photos_done(callback: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(AddObjectForm.waiting_history)
@@ -99,11 +127,21 @@ async def set_history(message: Message, state: FSMContext) -> None:
     await message.answer(f"🏗 Нынешнее состояние объекта. {_RICH_TEXT_HINT}")
 
 
+@router.message(AddObjectForm.waiting_history)
+async def history_wrong_type(message: Message) -> None:
+    await message.answer(f"Ожидается текст. {_RICH_TEXT_HINT} Или «-», чтобы пропустить:")
+
+
 @router.message(AddObjectForm.waiting_current_state, F.text)
 async def set_current_state(message: Message, state: FSMContext) -> None:
     await state.update_data(current_state=rich_text_or_none(message))
     await state.set_state(AddObjectForm.waiting_rumors)
     await message.answer(f"👂 Слухи вокруг объекта. {_RICH_TEXT_HINT} Или «-», чтобы пропустить:")
+
+
+@router.message(AddObjectForm.waiting_current_state)
+async def current_state_wrong_type(message: Message) -> None:
+    await message.answer(f"Ожидается текст. {_RICH_TEXT_HINT}")
 
 
 @router.message(AddObjectForm.waiting_rumors, F.text)
@@ -116,6 +154,11 @@ async def set_rumors(message: Message, state: FSMContext) -> None:
         "<code>52°07'56.1\"N 26°01'02.5\"E</code>\n\n"
         "Или отправьте «-», если координаты неизвестны."
     )
+
+
+@router.message(AddObjectForm.waiting_rumors)
+async def rumors_wrong_type(message: Message) -> None:
+    await message.answer(f"Ожидается текст. {_RICH_TEXT_HINT} Или «-», чтобы пропустить:")
 
 
 @router.message(AddObjectForm.waiting_coordinates, F.text)
@@ -139,6 +182,15 @@ async def set_coordinates(message: Message, state: FSMContext) -> None:
         "🔒 Сколько кредитов доверия нужно для доступа к этому объекту?\n"
         f"Обязательное поле — целое число от {config.MIN_OBJECT_CREDITS} "
         f"до {config.MAX_OBJECT_CREDITS}. Пропустить нельзя."
+    )
+
+
+@router.message(AddObjectForm.waiting_coordinates)
+async def coordinates_wrong_type(message: Message) -> None:
+    await message.answer(
+        "Нужны координаты текстом в формате:\n"
+        "<code>52°07'56.1\"N 26°01'02.5\"E</code>\n"
+        "Или «-», чтобы пропустить. Попробуйте ещё раз:"
     )
 
 
@@ -168,6 +220,14 @@ async def set_min_credits(message: Message, state: FSMContext) -> None:
     )
 
 
+@router.message(AddObjectForm.waiting_min_credits)
+async def min_credits_wrong_type(message: Message) -> None:
+    await message.answer(
+        f"Нужно целое число текстом (от {config.MIN_OBJECT_CREDITS} до "
+        f"{config.MAX_OBJECT_CREDITS}, без «-» — цену пропустить нельзя). Попробуйте ещё раз:"
+    )
+
+
 @router.callback_query(AddObjectForm.waiting_danger_level, F.data.regexp(r"^adddanger:(white|green|yellow|red|black)$"))
 async def set_danger_level(callback: CallbackQuery, state: FSMContext) -> None:
     danger_level = callback.data.split(":")[1]
@@ -189,6 +249,14 @@ async def set_danger_level(callback: CallbackQuery, state: FSMContext) -> None:
         "Сохранить объект в архив?"
     )
     await callback.message.answer(summary, reply_markup=add_object_confirm_kb())
+
+
+@router.message(AddObjectForm.waiting_danger_level)
+async def danger_level_wrong_type(message: Message) -> None:
+    await message.answer(
+        "Выберите уровень опасности одной из кнопок выше — свободный текст тут не принимается.",
+        reply_markup=danger_level_pick_kb("adddanger"),
+    )
 
 
 @router.callback_query(AddObjectForm.confirm, F.data == "objconfirm:cancel")
@@ -222,3 +290,8 @@ async def save_object(callback: CallbackQuery, state: FSMContext) -> None:
         f"✅ Объект «{esc(data['title'])}» добавлен в архив (id {object_id}).",
         reply_markup=admin_menu_kb(),
     )
+
+
+@router.message(AddObjectForm.confirm)
+async def confirm_wrong_type(message: Message) -> None:
+    await message.answer("Нажмите «✅ Сохранить в архив» или «❌ Отмена» кнопкой выше.")
